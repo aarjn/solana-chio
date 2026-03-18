@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use regex::Regex;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use chio::content::templates;
@@ -21,6 +22,12 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug, ValueEnum)]
+enum KeyAction {
+    Sync,
+    Generate,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     Init {
@@ -31,6 +38,9 @@ enum Commands {
     Build,
     Test,
     Deploy,
+    Keys {
+        action: KeyAction,
+    },
     #[command(name = "--help")]
     Help,
 }
@@ -109,6 +119,77 @@ fn main() -> Result<()> {
                 anyhow::bail!("Deploy failed with exit code: {:?}", status.code());
             } else {
                 println!("Program deployed successfully!");
+            }
+        }
+        Commands::Keys { action } => {
+            let target_deploy_dir = Path::new("target/deploy");
+            if !target_deploy_dir.exists() {
+                fs::create_dir_all(target_deploy_dir)?;
+            }
+
+            let lib_path = Path::new("src/lib.rs");
+            if !lib_path.exists() {
+                anyhow::bail!("src/lib.rs not found. Please run 'chio init' first.");
+            }
+
+            let content =
+                fs::read_to_string(lib_path).with_context(|| "Failed to read src/lib.rs")?;
+
+            // Use * instead of + to allow empty strings like declare_id!("")
+            let re = Regex::new(r#"declare_id!\s*\(\s*"([^"]*)"\s*\)"#).unwrap();
+
+            // Check if the macro exists at all. Error if missing, proceed if empty.
+            let captures = re.captures(&content)
+                .ok_or_else(|| anyhow::anyhow!("The 'declare_id!' macro was not found in src/lib.rs. It must be present even if empty."))?;
+
+            let declared_program_address = captures
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+
+            // Define the expected keypair path (usually based on project name or 'program')
+            // Here we check for an existing one first to compare
+            let keypair_path = find_unique_keypair_file(target_deploy_dir).with_context(|| {
+                anyhow::anyhow!("No keypair found in target/deploy. Chio did not init properly")
+            })?;
+
+            match action {
+                KeyAction::Sync => {
+                    let mut current_keypair_address = String::new();
+
+                    let output = Command::new("solana")
+                        .arg("address")
+                        .arg("-k")
+                        .arg(&keypair_path)
+                        .output()?;
+                    if output.status.success() {
+                        current_keypair_address =
+                            String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    }
+
+                    if !current_keypair_address.is_empty()
+                        && declared_program_address == current_keypair_address
+                    {
+                        println!("✅ Keys are already synced: {}", current_keypair_address);
+                    } else {
+                        if current_keypair_address.is_empty() {
+                            println!("No keypair found. Generating one to sync...");
+                        } else {
+                            println!("⚠️ Keys mismatch. Generating new keypair to sync...");
+                        }
+
+                        // Reuse logic to generate and update
+                        let new_address =
+                            generate_and_update_keys(lib_path, &keypair_path, &content, &re)?;
+                        println!("✅ New keypair generated and synced: {}", new_address);
+                    }
+                }
+                KeyAction::Generate => {
+                    println!("Generating a fresh keypair...");
+                    let new_address =
+                        generate_and_update_keys(lib_path, &keypair_path, &content, &re)?;
+                    println!("✅ Generated and updated src/lib.rs with: {}", new_address);
+                }
             }
         }
         Commands::Help => {
@@ -451,4 +532,65 @@ test-default = ["no-entrypoint", "std"]
     fs::write(project_dir.join("Cargo.toml"), cargo_toml)?;
 
     Ok(())
+}
+
+fn find_unique_keypair_file(dir: &Path) -> Result<PathBuf> {
+    // 1. Define the regex for *-keypair.json
+    // ^ matches start, .* matches anything, \.json$ matches the extension exactly
+    let re = Regex::new(r".*-keypair\.json$").unwrap();
+
+    // 2. Read the directory and filter for files matching the regex
+    let matches: Vec<PathBuf> = fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| re.is_match(name))
+        })
+        .collect();
+
+    // 3. Ensure there is exactly one file
+    match matches.len() {
+        1 => Ok(matches[0].clone()),
+        0 => anyhow::bail!("No keypair file found matching *-keypair.json"),
+        n => anyhow::bail!("Expected 1 keypair file, but found {}: {:?}", n, matches),
+    }
+}
+
+fn generate_and_update_keys(
+    lib_path: &Path,
+    kp_path: &PathBuf,
+    content: &str,
+    re: &Regex,
+) -> Result<String> {
+    // 2. Generate new keypair
+    let status = Command::new("solana-keygen")
+        .arg("new")
+        .arg("-o")
+        .arg(kp_path)
+        .arg("--force")
+        .arg("--no-bip39-passphrase")
+        .status()
+        .with_context(|| "Failed to execute solana-keygen")?;
+
+    if !status.success() {
+        anyhow::bail!("solana-keygen failed to generate a new key.");
+    }
+
+    // 3. Get the new address
+    let output = Command::new("solana")
+        .arg("address")
+        .arg("-k")
+        .arg(kp_path)
+        .output()?;
+
+    let new_address = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // 4. Update the file content
+    let new_content = re.replace(content, format!(r#"declare_id!("{}")"#, new_address));
+    fs::write(lib_path, new_content.to_string())
+        .with_context(|| "Failed to write updated ID to src/lib.rs")?;
+
+    Ok(new_address)
 }
