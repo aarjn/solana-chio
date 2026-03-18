@@ -5,9 +5,9 @@
 
 #[cfg(test)]
 mod filesystem {
+    use chio::content::templates;
     use std::fs;
     use tempfile::TempDir;
-    use chio::content::templates;
 
     #[test]
     fn create_cargo_toml_mollusk_dependencies() {
@@ -18,8 +18,8 @@ mod filesystem {
 
         fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
 
-        let content = fs::read_to_string(project_dir.join("Cargo.toml"))
-            .expect("Failed to read Cargo.toml");
+        let content =
+            fs::read_to_string(project_dir.join("Cargo.toml")).expect("Failed to read Cargo.toml");
 
         assert!(content.contains("mollusk-svm"));
         assert!(content.contains("mollusk-svm-bencher"));
@@ -36,8 +36,8 @@ mod filesystem {
 
         fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
 
-        let content = fs::read_to_string(project_dir.join("Cargo.toml"))
-            .expect("Failed to read Cargo.toml");
+        let content =
+            fs::read_to_string(project_dir.join("Cargo.toml")).expect("Failed to read Cargo.toml");
 
         assert!(content.contains("litesvm"));
         assert!(content.contains("litesvm-token"));
@@ -53,8 +53,8 @@ mod filesystem {
         let cargo_toml = format!("[package]\nname = \"{}\"", project_name);
         fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
 
-        let content = fs::read_to_string(project_dir.join("Cargo.toml"))
-            .expect("Failed to read Cargo.toml");
+        let content =
+            fs::read_to_string(project_dir.join("Cargo.toml")).expect("Failed to read Cargo.toml");
 
         assert!(content.contains(&format!("name = \"{}\"", project_name)));
     }
@@ -71,8 +71,8 @@ test-default = ["no-entrypoint", "std"]
 "#;
         fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
 
-        let content = fs::read_to_string(project_dir.join("Cargo.toml"))
-            .expect("Failed to read Cargo.toml");
+        let content =
+            fs::read_to_string(project_dir.join("Cargo.toml")).expect("Failed to read Cargo.toml");
 
         assert!(content.contains("[features]"));
         assert!(content.contains("no-entrypoint = []"));
@@ -90,8 +90,8 @@ crate-type = ["cdylib", "rlib"]
 "#;
         fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
 
-        let content = fs::read_to_string(project_dir.join("Cargo.toml"))
-            .expect("Failed to read Cargo.toml");
+        let content =
+            fs::read_to_string(project_dir.join("Cargo.toml")).expect("Failed to read Cargo.toml");
 
         assert!(content.contains("crate-type = [\"cdylib\", \"rlib\"]"));
     }
@@ -104,8 +104,11 @@ crate-type = ["cdylib", "rlib"]
         fs::create_dir_all(&src_dir).expect("Failed to create src dir");
 
         // Create all required files
-        fs::write(src_dir.join("lib.rs"), templates::lib_rs("11111111111111111111111111111112"))
-            .expect("Failed to write lib.rs");
+        fs::write(
+            src_dir.join("lib.rs"),
+            templates::lib_rs("11111111111111111111111111111112"),
+        )
+        .expect("Failed to write lib.rs");
         fs::write(src_dir.join("entrypoint.rs"), templates::entrypoint_rs())
             .expect("Failed to write entrypoint.rs");
         fs::write(src_dir.join("errors.rs"), templates::errors_rs())
@@ -128,7 +131,8 @@ crate-type = ["cdylib", "rlib"]
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let project_dir = temp_dir.path();
 
-        fs::create_dir_all(project_dir.join("src/instructions")).expect("Failed to create instructions dir");
+        fs::create_dir_all(project_dir.join("src/instructions"))
+            .expect("Failed to create instructions dir");
         fs::create_dir_all(project_dir.join("src/states")).expect("Failed to create states dir");
         fs::create_dir_all(project_dir.join("tests")).expect("Failed to create tests dir");
 
@@ -169,8 +173,8 @@ crate-type = ["cdylib", "rlib"]
         fs::write(src_dir.join("lib.rs"), templates::lib_rs(test_address))
             .expect("Failed to write lib.rs");
 
-        let lib_content = fs::read_to_string(src_dir.join("lib.rs"))
-            .expect("Failed to read lib.rs");
+        let lib_content =
+            fs::read_to_string(src_dir.join("lib.rs")).expect("Failed to read lib.rs");
 
         assert!(lib_content.contains(test_address));
     }

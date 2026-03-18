@@ -122,75 +122,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Keys { action } => {
-            let target_deploy_dir = Path::new("target/deploy");
-            if !target_deploy_dir.exists() {
-                fs::create_dir_all(target_deploy_dir)?;
-            }
-
-            let lib_path = Path::new("src/lib.rs");
-            if !lib_path.exists() {
-                anyhow::bail!("src/lib.rs not found. Please run 'chio init' first.");
-            }
-
-            let content =
-                fs::read_to_string(lib_path).with_context(|| "Failed to read src/lib.rs")?;
-
-            // Use * instead of + to allow empty strings like declare_id!("")
-            let re = Regex::new(r#"declare_id!\s*\(\s*"([^"]*)"\s*\)"#).unwrap();
-
-            // Check if the macro exists at all. Error if missing, proceed if empty.
-            let captures = re.captures(&content)
-                .ok_or_else(|| anyhow::anyhow!("The 'declare_id!' macro was not found in src/lib.rs. It must be present even if empty."))?;
-
-            let declared_program_address = captures
-                .get(1)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-
-            // Define the expected keypair path (usually based on project name or 'program')
-            // Here we check for an existing one first to compare
-            let keypair_path = find_unique_keypair_file(target_deploy_dir).with_context(|| {
-                anyhow::anyhow!("No keypair found in target/deploy. Chio did not init properly")
-            })?;
-
-            match action {
-                KeyAction::Sync => {
-                    let mut current_keypair_address = String::new();
-
-                    let output = Command::new("solana")
-                        .arg("address")
-                        .arg("-k")
-                        .arg(&keypair_path)
-                        .output()?;
-                    if output.status.success() {
-                        current_keypair_address =
-                            String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    }
-
-                    if !current_keypair_address.is_empty()
-                        && declared_program_address == current_keypair_address
-                    {
-                        println!("✅ Keys are already synced: {}", current_keypair_address);
-                    } else {
-                        if current_keypair_address.is_empty() {
-                            println!("No keypair found. Generating one to sync...");
-                        } else {
-                            println!("⚠️ Keys mismatch. Generating new keypair to sync...");
-                        }
-
-                        // Reuse logic to generate and update
-                        let new_address =
-                            generate_and_update_keys(lib_path, &keypair_path, &content, &re)?;
-                        println!("✅ New keypair generated and synced: {}", new_address);
-                    }
-                }
-                KeyAction::Generate => {
-                    println!("Generating a fresh keypair...");
-                    let new_address =
-                        generate_and_update_keys(lib_path, &keypair_path, &content, &re)?;
-                    println!("✅ Generated and updated src/lib.rs with: {}", new_address);
-                }
-            }
+            handle_keys_action(action)?;
         }
         Commands::Help => {
             display_help_banner()?;
@@ -593,4 +525,75 @@ fn generate_and_update_keys(
         .with_context(|| "Failed to write updated ID to src/lib.rs")?;
 
     Ok(new_address)
+}
+
+fn handle_keys_action(action: &KeyAction) -> Result<()> {
+    let target_deploy_dir = Path::new("target/deploy");
+    if !target_deploy_dir.exists() {
+        fs::create_dir_all(target_deploy_dir)?;
+    }
+
+    let lib_path = Path::new("src/lib.rs");
+    if !lib_path.exists() {
+        anyhow::bail!("src/lib.rs not found. Please run 'chio init' first.");
+    }
+
+    let content = fs::read_to_string(lib_path).with_context(|| "Failed to read src/lib.rs")?;
+
+    // Use * instead of + to allow empty strings like declare_id!("")
+    let re = Regex::new(r#"declare_id!\s*\(\s*"([^"]*)"\s*\)"#).unwrap();
+
+    // Check if the macro exists at all. Error if missing, proceed if empty.
+    let captures = re.captures(&content)
+        .ok_or_else(|| anyhow::anyhow!("The 'declare_id!' macro was not found in src/lib.rs. It must be present even if empty."))?;
+
+    let declared_program_address = captures
+        .get(1)
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+
+    // Define the expected keypair path (usually based on project name or 'program')
+    // Here we check for an existing one first to compare
+    let keypair_path = find_unique_keypair_file(target_deploy_dir).with_context(|| {
+        anyhow::anyhow!("No keypair found in target/deploy. Chio did not init properly")
+    })?;
+
+    match action {
+        KeyAction::Sync => {
+            let mut current_keypair_address = String::new();
+
+            let output = Command::new("solana")
+                .arg("address")
+                .arg("-k")
+                .arg(&keypair_path)
+                .output()?;
+            if output.status.success() {
+                current_keypair_address =
+                    String::from_utf8_lossy(&output.stdout).trim().to_string();
+            }
+
+            if !current_keypair_address.is_empty()
+                && declared_program_address == current_keypair_address
+            {
+                println!("✅ Keys are already synced: {}", current_keypair_address);
+            } else {
+                if current_keypair_address.is_empty() {
+                    println!("No keypair found. Generating one to sync...");
+                } else {
+                    println!("⚠️ Keys mismatch. Generating new keypair to sync...");
+                }
+
+                // Reuse logic to generate and update
+                let new_address = generate_and_update_keys(lib_path, &keypair_path, &content, &re)?;
+                println!("✅ New keypair generated and synced: {}", new_address);
+            }
+        }
+        KeyAction::Generate => {
+            println!("Generating a fresh keypair...");
+            let new_address = generate_and_update_keys(lib_path, &keypair_path, &content, &re)?;
+            println!("✅ Generated and updated src/lib.rs with: {}", new_address);
+        }
+    }
+
+    Ok(())
 }
