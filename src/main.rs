@@ -176,7 +176,7 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
  "#
     );
     println!("🧑🏻‍🍳 Initializing your pinocchio project: {}", project_name);
-    println!(""); // Create the project directory
+    println!(); // Create the project directory
     let project_dir = Path::new(project_name);
     fs::create_dir_all(project_dir)
         .with_context(|| format!("Failed to create project directory: {}", project_name))?;
@@ -240,16 +240,15 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
         .output()
         .with_context(|| "Failed to get user address")?;
 
-    let user_address: String;
-    if user_address_output.status.success() {
-        user_address = String::from_utf8_lossy(&user_address_output.stdout)
+    let user_address = if user_address_output.status.success() {
+        String::from_utf8_lossy(&user_address_output.stdout)
             .trim()
-            .to_string();
+            .to_string()
     } else {
         let error = String::from_utf8_lossy(&user_address_output.stderr);
         println!("Failed to get user Solana address: {}", error);
-        user_address = String::new();
-    }
+        String::new()
+    };
 
     create_project_structure(
         project_dir,
@@ -261,7 +260,7 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
 
     init_git_repo(project_dir, project_name)?;
 
-    println!("");
+    println!();
     println!(
         "✅ Pinocchio Project '{}' initialized successfully!",
         project_name
@@ -271,7 +270,7 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
     println!("$ chio build");
     println!("$ chio test");
     println!("$ chio deploy");
-    println!("");
+    println!();
 
     Ok(())
 }
