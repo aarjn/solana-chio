@@ -40,6 +40,8 @@ enum Commands {
     Deploy,
     Keys {
         action: KeyAction,
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     #[command(name = "--help")]
     Help,
@@ -121,8 +123,8 @@ fn main() -> Result<()> {
                 println!("Program deployed successfully!");
             }
         }
-        Commands::Keys { action } => {
-            handle_keys_action(action)?;
+        Commands::Keys { action, force } => {
+            handle_keys_action(action, *force)?;
         }
         Commands::Help => {
             display_help_banner()?;
@@ -494,7 +496,16 @@ fn generate_and_update_keys(
     kp_path: &PathBuf,
     content: &str,
     re: &Regex,
+    force: bool,
 ) -> Result<String> {
+    // 1. Prevent accidental overwrites
+    if kp_path.exists() && !force {
+        anyhow::bail!(
+            "Kepair already exists at {:?}. Use --force flag to overwrite",
+            kp_path
+        )
+    }
+
     // 2. Generate new keypair
     let status = Command::new("solana-keygen")
         .arg("new")
@@ -519,14 +530,12 @@ fn generate_and_update_keys(
     let new_address = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // 4. Update the file content
-    let new_content = re.replace(content, format!(r#"declare_id!("{}")"#, new_address));
-    fs::write(lib_path, new_content.to_string())
-        .with_context(|| "Failed to write updated ID to src/lib.rs")?;
+    update_declared_id(lib_path, content, re, &new_address)?;
 
     Ok(new_address)
 }
 
-fn handle_keys_action(action: &KeyAction) -> Result<()> {
+fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
     let target_deploy_dir = Path::new("target/deploy");
     if !target_deploy_dir.exists() {
         fs::create_dir_all(target_deploy_dir)?;
@@ -554,45 +563,51 @@ fn handle_keys_action(action: &KeyAction) -> Result<()> {
     // Define the expected keypair path (usually based on project name or 'program')
     // Here we check for an existing one first to compare
     let keypair_path = find_unique_keypair_file(target_deploy_dir).with_context(|| {
-        anyhow::anyhow!("No keypair found in target/deploy. Chio did not init properly")
+        anyhow::anyhow!(
+            "Unable to find unique keypair in target/deploy. Chio did not init properly"
+        )
     })?;
 
     match action {
         KeyAction::Sync => {
-            let mut current_keypair_address = String::new();
-
             let output = Command::new("solana")
                 .arg("address")
                 .arg("-k")
                 .arg(&keypair_path)
                 .output()?;
-            if output.status.success() {
-                current_keypair_address =
-                    String::from_utf8_lossy(&output.stdout).trim().to_string();
-            }
+
+            let current_keypair_address = if output.status.success() {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            } else {
+                anyhow::bail!("Failed to read address from existing keypair file");
+            };
 
             if !current_keypair_address.is_empty()
                 && declared_program_address == current_keypair_address
             {
-                println!("✅ Keys are already synced: {}", current_keypair_address);
+                println!("Keys are already synced: {}", current_keypair_address);
             } else {
-                if current_keypair_address.is_empty() {
-                    println!("No keypair found. Generating one to sync...");
-                } else {
-                    println!("⚠️ Keys mismatch. Generating new keypair to sync...");
-                }
+                println!("⚠️ Keys mismatch. Syncing keypair with declared...");
 
                 // Reuse logic to generate and update
-                let new_address = generate_and_update_keys(lib_path, &keypair_path, &content, &re)?;
-                println!("✅ New keypair generated and synced: {}", new_address);
+                update_declared_id(lib_path, &content, &re, &current_keypair_address)?;
+                println!("Keypair synced: {}", current_keypair_address);
             }
         }
         KeyAction::Generate => {
             println!("Generating a fresh keypair...");
-            let new_address = generate_and_update_keys(lib_path, &keypair_path, &content, &re)?;
+            let new_address =
+                generate_and_update_keys(lib_path, &keypair_path, &content, &re, force)?;
             println!("✅ Generated and updated src/lib.rs with: {}", new_address);
         }
     }
 
+    Ok(())
+}
+
+fn update_declared_id(lib_path: &Path, content: &str, re: &Regex, new_address: &str) -> Result<()> {
+    let new_content = re.replace(content, format!(r#"declare_id!("{}")"#, new_address));
+    fs::write(lib_path, new_content.to_string())
+        .with_context(|| "Failed to write ID to src/lib.rs")?;
     Ok(())
 }

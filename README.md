@@ -61,6 +61,12 @@ chio test
 # Deploy your program
 chio deploy
 
+# Sync keypairs between target/deploy/keypair.json and declared id in lib.rs
+chio keys sync
+
+# Generate a new keypair and sync it with the declared id
+chio keys generate
+
 # Get help
 chio --help
 ```
