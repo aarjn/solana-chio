@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use regex::Regex;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use toml::Value;
 
 use chio::content::templates;
 use chio::is_valid_project_name;
@@ -21,6 +23,12 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug, ValueEnum)]
+enum KeyAction {
+    Sync,
+    Generate,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     Init {
@@ -31,6 +39,11 @@ enum Commands {
     Build,
     Test,
     Deploy,
+    Keys {
+        action: KeyAction,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
     #[command(name = "--help")]
     Help,
 }
@@ -111,6 +124,9 @@ fn main() -> Result<()> {
                 println!("Program deployed successfully!");
             }
         }
+        Commands::Keys { action, force } => {
+            handle_keys_action(action, *force)?;
+        }
         Commands::Help => {
             display_help_banner()?;
         }
@@ -134,10 +150,11 @@ fn display_help_banner() -> Result<()> {
     println!("👾 Setup your pinocchio project blazingly fast💨");
 
     println!("\n🏗️ AVAILABLE COMMANDS:");
-    println!("   chio init <project_name> - Initialize a new Pinocchio project");
-    println!("   chio build               - Build the project");
-    println!("   chio test                - Run project tests");
-    println!("   chio deploy              - Deploy the project");
+    println!("   chio init <project_name>  - Initialize a new Pinocchio project");
+    println!("   chio build                - Build the project");
+    println!("   chio test                 - Run project tests");
+    println!("   chio deploy               - Deploy the project");
+    println!("   chio keys <sync/generate> - Sync/Generate program keypair");
 
     Ok(())
 }
@@ -163,7 +180,7 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
  "#
     );
     println!("🧑🏻‍🍳 Initializing your pinocchio project: {}", project_name);
-    println!(""); // Create the project directory
+    println!(); // Create the project directory
     let project_dir = Path::new(project_name);
     fs::create_dir_all(project_dir)
         .with_context(|| format!("Failed to create project directory: {}", project_name))?;
@@ -227,16 +244,15 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
         .output()
         .with_context(|| "Failed to get user address")?;
 
-    let user_address: String;
-    if user_address_output.status.success() {
-        user_address = String::from_utf8_lossy(&user_address_output.stdout)
+    let user_address = if user_address_output.status.success() {
+        String::from_utf8_lossy(&user_address_output.stdout)
             .trim()
-            .to_string();
+            .to_string()
     } else {
         let error = String::from_utf8_lossy(&user_address_output.stderr);
         println!("Failed to get user Solana address: {}", error);
-        user_address = String::new();
-    }
+        String::new()
+    };
 
     create_project_structure(
         project_dir,
@@ -248,7 +264,7 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
 
     init_git_repo(project_dir, project_name)?;
 
-    println!("");
+    println!();
     println!(
         "✅ Pinocchio Project '{}' initialized successfully!",
         project_name
@@ -258,7 +274,7 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
     println!("$ chio build");
     println!("$ chio test");
     println!("$ chio deploy");
-    println!("");
+    println!();
 
     Ok(())
 }
@@ -451,4 +467,200 @@ test-default = ["no-entrypoint", "std"]
     fs::write(project_dir.join("Cargo.toml"), cargo_toml)?;
 
     Ok(())
+}
+
+fn project_name_from_cargo_toml(project_dir: &Path) -> Result<String> {
+    let cargo_toml_path = project_dir.join("Cargo.toml");
+    let cargo_toml = fs::read_to_string(&cargo_toml_path)
+        .with_context(|| format!("Failed to read {}", cargo_toml_path.display()))?;
+
+    let parsed: Value = toml::from_str(&cargo_toml)
+        .with_context(|| format!("Failed to parse {}", cargo_toml_path.display()))?;
+
+    parsed
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not find [package].name in {}",
+                cargo_toml_path.display()
+            )
+        })
+}
+
+fn expected_keypair_path(project_dir: &Path) -> Result<PathBuf> {
+    let project_name = project_name_from_cargo_toml(project_dir)?;
+    Ok(project_dir
+        .join("target")
+        .join("deploy")
+        .join(format!("{}-keypair.json", project_name)))
+}
+
+fn generate_and_update_keys(
+    lib_path: &Path,
+    kp_path: &PathBuf,
+    content: &str,
+    re: &Regex,
+    force: bool,
+) -> Result<String> {
+    // 1. Prevent accidental overwrites
+    if kp_path.exists() && !force {
+        anyhow::bail!(
+            "Kepair already exists at {:?}. Use --force flag to overwrite",
+            kp_path
+        )
+    }
+
+    // 2. Generate new keypair
+    let status = Command::new("solana-keygen")
+        .arg("new")
+        .arg("-o")
+        .arg(kp_path)
+        .arg("--force")
+        .arg("--no-bip39-passphrase")
+        .status()
+        .with_context(|| "Failed to execute solana-keygen")?;
+
+    if !status.success() {
+        anyhow::bail!("solana-keygen failed to generate a new key.");
+    }
+
+    // 3. Get the new address
+    let output = Command::new("solana")
+        .arg("address")
+        .arg("-k")
+        .arg(kp_path)
+        .output()?;
+
+    let new_address = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // 4. Update the file content
+    update_declared_id(lib_path, content, re, &new_address)?;
+
+    Ok(new_address)
+}
+
+fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
+    let project_dir = Path::new(".");
+    let target_deploy_dir = Path::new("target/deploy");
+    if !target_deploy_dir.exists() {
+        fs::create_dir_all(target_deploy_dir)?;
+    }
+
+    let lib_path = Path::new("src/lib.rs");
+    if !lib_path.exists() {
+        anyhow::bail!("src/lib.rs not found. Please run 'chio init' first.");
+    }
+
+    let content = fs::read_to_string(lib_path).with_context(|| "Failed to read src/lib.rs")?;
+
+    // Use * instead of + to allow empty strings like declare_id!("")
+    let re = Regex::new(r#"declare_id!\s*\(\s*"([^"]*)"\s*\)"#).unwrap();
+
+    // Check if the macro exists at all. Error if missing, proceed if empty.
+    let captures = re.captures(&content)
+        .ok_or_else(|| anyhow::anyhow!("The 'declare_id!' macro was not found in src/lib.rs. It must be present even if empty."))?;
+
+    let declared_program_address = captures
+        .get(1)
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+
+    let keypair_path = expected_keypair_path(project_dir)?;
+
+    match action {
+        KeyAction::Sync => {
+            if !keypair_path.exists() {
+                anyhow::bail!(
+                    "Keypair not found at {}. Run 'chio keys generate' to create it.",
+                    keypair_path.display()
+                );
+            }
+
+            let output = Command::new("solana")
+                .arg("address")
+                .arg("-k")
+                .arg(&keypair_path)
+                .output()?;
+
+            let current_keypair_address = if output.status.success() {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            } else {
+                anyhow::bail!("Failed to read address from existing keypair file");
+            };
+
+            if !current_keypair_address.is_empty()
+                && declared_program_address == current_keypair_address
+            {
+                println!("Keys are already synced: {}", current_keypair_address);
+            } else {
+                println!("⚠️ Keys mismatch. Syncing keypair with declared...");
+
+                // Reuse logic to generate and update
+                update_declared_id(lib_path, &content, &re, &current_keypair_address)?;
+                println!("Keypair synced: {}", current_keypair_address);
+            }
+        }
+        KeyAction::Generate => {
+            println!("Generating a fresh keypair...");
+            let new_address =
+                generate_and_update_keys(lib_path, &keypair_path, &content, &re, force)?;
+            println!("✅ Generated and updated src/lib.rs with: {}", new_address);
+        }
+    }
+
+    Ok(())
+}
+
+fn update_declared_id(lib_path: &Path, content: &str, re: &Regex, new_address: &str) -> Result<()> {
+    let new_content = re.replace(content, format!(r#"declare_id!("{}")"#, new_address));
+    fs::write(lib_path, new_content.to_string())
+        .with_context(|| "Failed to write ID to src/lib.rs")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expected_keypair_path, project_name_from_cargo_toml};
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn reads_project_name_from_cargo_toml() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            "[package]\nname = \"hello_world\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("Failed to write Cargo.toml");
+
+        let project_name =
+            project_name_from_cargo_toml(temp_dir.path()).expect("Failed to read project name");
+
+        assert_eq!(project_name, "hello_world");
+    }
+
+    #[test]
+    fn builds_expected_keypair_path_from_project_name() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            "[package]\nname = \"hello_world\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("Failed to write Cargo.toml");
+
+        let keypair_path =
+            expected_keypair_path(temp_dir.path()).expect("Failed to build keypair path");
+
+        assert_eq!(
+            keypair_path,
+            temp_dir
+                .path()
+                .join("target")
+                .join("deploy")
+                .join("hello_world-keypair.json")
+        );
+    }
 }
