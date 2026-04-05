@@ -4,6 +4,7 @@ use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use toml::Value;
 
 use chio::content::templates;
 use chio::is_valid_project_name;
@@ -149,10 +150,11 @@ fn display_help_banner() -> Result<()> {
     println!("👾 Setup your pinocchio project blazingly fast💨");
 
     println!("\n🏗️ AVAILABLE COMMANDS:");
-    println!("   chio init <project_name> - Initialize a new Pinocchio project");
-    println!("   chio build               - Build the project");
-    println!("   chio test                - Run project tests");
-    println!("   chio deploy              - Deploy the project");
+    println!("   chio init <project_name>  - Initialize a new Pinocchio project");
+    println!("   chio build                - Build the project");
+    println!("   chio test                 - Run project tests");
+    println!("   chio deploy               - Deploy the project");
+    println!("   chio keys <sync/generate> - Sync/Generate program keypair");
 
     Ok(())
 }
@@ -467,28 +469,33 @@ test-default = ["no-entrypoint", "std"]
     Ok(())
 }
 
-fn find_unique_keypair_file(dir: &Path) -> Result<PathBuf> {
-    // 1. Define the regex for *-keypair.json
-    // ^ matches start, .* matches anything, \.json$ matches the extension exactly
-    let re = Regex::new(r".*-keypair\.json$").unwrap();
+fn project_name_from_cargo_toml(project_dir: &Path) -> Result<String> {
+    let cargo_toml_path = project_dir.join("Cargo.toml");
+    let cargo_toml = fs::read_to_string(&cargo_toml_path)
+        .with_context(|| format!("Failed to read {}", cargo_toml_path.display()))?;
 
-    // 2. Read the directory and filter for files matching the regex
-    let matches: Vec<PathBuf> = fs::read_dir(dir)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| re.is_match(name))
+    let parsed: Value = toml::from_str(&cargo_toml)
+        .with_context(|| format!("Failed to parse {}", cargo_toml_path.display()))?;
+
+    parsed
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not find [package].name in {}",
+                cargo_toml_path.display()
+            )
         })
-        .collect();
+}
 
-    // 3. Ensure there is exactly one file
-    match matches.len() {
-        1 => Ok(matches[0].clone()),
-        0 => anyhow::bail!("No keypair file found matching *-keypair.json"),
-        n => anyhow::bail!("Expected 1 keypair file, but found {}: {:?}", n, matches),
-    }
+fn expected_keypair_path(project_dir: &Path) -> Result<PathBuf> {
+    let project_name = project_name_from_cargo_toml(project_dir)?;
+    Ok(project_dir
+        .join("target")
+        .join("deploy")
+        .join(format!("{}-keypair.json", project_name)))
 }
 
 fn generate_and_update_keys(
@@ -536,6 +543,7 @@ fn generate_and_update_keys(
 }
 
 fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
+    let project_dir = Path::new(".");
     let target_deploy_dir = Path::new("target/deploy");
     if !target_deploy_dir.exists() {
         fs::create_dir_all(target_deploy_dir)?;
@@ -560,16 +568,17 @@ fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
         .map(|m| m.as_str().to_string())
         .unwrap_or_default();
 
-    // Define the expected keypair path (usually based on project name or 'program')
-    // Here we check for an existing one first to compare
-    let keypair_path = find_unique_keypair_file(target_deploy_dir).with_context(|| {
-        anyhow::anyhow!(
-            "Unable to find unique keypair in target/deploy. Chio did not init properly"
-        )
-    })?;
+    let keypair_path = expected_keypair_path(project_dir)?;
 
     match action {
         KeyAction::Sync => {
+            if !keypair_path.exists() {
+                anyhow::bail!(
+                    "Keypair not found at {}. Run 'chio keys generate' to create it.",
+                    keypair_path.display()
+                );
+            }
+
             let output = Command::new("solana")
                 .arg("address")
                 .arg("-k")
@@ -610,4 +619,48 @@ fn update_declared_id(lib_path: &Path, content: &str, re: &Regex, new_address: &
     fs::write(lib_path, new_content.to_string())
         .with_context(|| "Failed to write ID to src/lib.rs")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expected_keypair_path, project_name_from_cargo_toml};
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn reads_project_name_from_cargo_toml() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            "[package]\nname = \"hello_world\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("Failed to write Cargo.toml");
+
+        let project_name =
+            project_name_from_cargo_toml(temp_dir.path()).expect("Failed to read project name");
+
+        assert_eq!(project_name, "hello_world");
+    }
+
+    #[test]
+    fn builds_expected_keypair_path_from_project_name() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            "[package]\nname = \"hello_world\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("Failed to write Cargo.toml");
+
+        let keypair_path =
+            expected_keypair_path(temp_dir.path()).expect("Failed to build keypair path");
+
+        assert_eq!(
+            keypair_path,
+            temp_dir
+                .path()
+                .join("target")
+                .join("deploy")
+                .join("hello_world-keypair.json")
+        );
+    }
 }
