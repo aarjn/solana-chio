@@ -1,9 +1,15 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use console::Style;
+use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 use toml::Value;
 
 use chio::content::templates;
@@ -46,6 +52,106 @@ enum Commands {
     },
 }
 
+const MAX_LOG_LINES: usize = 6;
+
+fn colorize_cargo_line(line: &str) -> String {
+    let green_bold = Style::new().green().bold();
+    let keywords = [
+        "Compiling",
+        "Linking",
+        "Finished",
+        "Running",
+        "Downloading",
+        "Downloaded",
+    ];
+    for keyword in &keywords {
+        if let Some(rest) = line.strip_prefix(keyword) {
+            return format!("{}{}", green_bold.apply_to(keyword), rest);
+        }
+    }
+    line.to_string()
+}
+
+struct CommandResult {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr_lines: Vec<String>,
+}
+
+fn run_with_spinner(command: &str, args: &[&str], message: &str) -> Result<CommandResult> {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["◰", "◳", "◲", "◱", "◰"])
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    spinner.set_message(message.to_string());
+    spinner.enable_steady_tick(Duration::from_millis(100));
+
+    let mut child = Command::new(command)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to run {} {}", command, args.join(" ")))?;
+
+    let stderr = child.stderr.take().unwrap();
+    let recent_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let all_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let recent_clone = Arc::clone(&recent_lines);
+    let all_clone = Arc::clone(&all_lines);
+    let spinner_clone = spinner.clone();
+    let base_message = message.to_string();
+
+    let reader_thread = thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            let Ok(line) = line else { break };
+            all_clone.lock().unwrap().push(line.clone());
+
+            let trimmed = line.trim();
+            if trimmed.starts_with("Compiling")
+                || trimmed.starts_with("Linking")
+                || trimmed.starts_with("Finished")
+            {
+                let mut recent = recent_clone.lock().unwrap();
+                recent.push(line.clone());
+                if recent.len() > MAX_LOG_LINES {
+                    recent.remove(0);
+                }
+                let log_display = recent
+                    .iter()
+                    .map(|l| {
+                        let t = l.trim();
+                        let colored = colorize_cargo_line(t);
+                        format!("\n  {}", colored)
+                    })
+                    .collect::<String>();
+                spinner_clone.set_message(format!("{}{}", base_message, log_display));
+            }
+        }
+    });
+
+    let stdout = {
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut child.stdout.take().unwrap(), &mut buf)?;
+        buf
+    };
+
+    let status = child.wait()?;
+    reader_thread.join().unwrap();
+    spinner.finish_and_clear();
+
+    let stderr_lines = Arc::try_unwrap(all_lines).unwrap().into_inner().unwrap();
+
+    Ok(CommandResult {
+        status,
+        stdout,
+        stderr_lines,
+    })
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -57,42 +163,48 @@ fn main() -> Result<()> {
             init_project(project_name, *test_framework)?;
         }
         Commands::Build => {
-            println!("Building program");
-            let status = Command::new("cargo")
-                .arg("build-sbf")
-                .spawn()?
-                .wait()
-                .with_context(|| "Failed to build project")?;
-
-            if !status.success() {
-                anyhow::bail!("Build failed with exit code: {:?}", status.code());
-            } else {
+            let result = run_with_spinner("cargo", &["build-sbf"], "Building program...")?;
+            if result.status.success() {
                 println!("Build completed successfully!");
+            } else {
+                for line in &result.stderr_lines {
+                    eprintln!("{}", line);
+                }
+                anyhow::bail!("Build failed with exit code: {:?}", result.status.code());
             }
         }
         Commands::Test => {
-            println!("Building program before testing...");
-            let build_status = Command::new("cargo")
-                .arg("build-sbf")
-                .spawn()?
-                .wait()
-                .with_context(|| "Failed to build project")?;
-
-            if !build_status.success() {
-                anyhow::bail!("Build failed with exit code: {:?}", build_status.code());
+            let build_result = run_with_spinner("cargo", &["build-sbf"], "Building program...")?;
+            if !build_result.status.success() {
+                for line in &build_result.stderr_lines {
+                    eprintln!("{}", line);
+                }
+                anyhow::bail!(
+                    "Build failed with exit code: {:?}",
+                    build_result.status.code()
+                );
             }
+            println!("Build completed successfully!");
 
-            println!("Build completed, running tests...");
-            let test_status = Command::new("cargo")
-                .arg("test")
-                .spawn()?
-                .wait()
-                .with_context(|| "Failed to test project")?;
-
-            if !test_status.success() {
-                anyhow::bail!("Test failed with exit code: {:?}", test_status.code());
+            let test_result = run_with_spinner("cargo", &["test"], "Running tests...")?;
+            if test_result.status.success() {
+                let stdout = String::from_utf8_lossy(&test_result.stdout);
+                if !stdout.is_empty() {
+                    println!("{}", stdout);
+                }
+                println!("All tests passed!");
             } else {
-                println!("Tested successfully!");
+                let stdout = String::from_utf8_lossy(&test_result.stdout);
+                if !stdout.is_empty() {
+                    eprintln!("{}", stdout);
+                }
+                for line in &test_result.stderr_lines {
+                    eprintln!("{}", line);
+                }
+                anyhow::bail!(
+                    "Tests failed with exit code: {:?}",
+                    test_result.status.code()
+                );
             }
         }
         Commands::Deploy => {
@@ -151,23 +263,34 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
         );
     }
 
+    let green = Style::new().green().bold();
+    let dim = Style::new().dim();
+
     println!(
         r#"
-      *     *
-  ___| |__ (_) ___
- / __| '_ \| |/ _ \
-| (__| | | | | (_) |
- \___|_| |_|_|\___/
-
- "#
+  {}
+  {}
+  {}
+  {}
+  {}
+  {}
+"#,
+        green.apply_to("██████╗ ██╗  ██╗██╗ ██████╗"),
+        green.apply_to("██╔════╝██║  ██║██║██╔═══██╗"),
+        green.apply_to("██║     ███████║██║██║   ██║"),
+        green.apply_to("██║     ██╔══██║██║██║   ██║"),
+        green.apply_to("╚██████╗██║  ██║██║╚██████╔╝"),
+        green.apply_to("╚═════╝╚═╝  ╚═╝╚═╝ ╚═════╝"),
     );
-    println!("🧑🏻‍🍳 Initializing your pinocchio project: {}", project_name);
-    println!(); // Create the project directory
+    println!(
+        "  {}",
+        dim.apply_to(format!("initializing {}...", project_name))
+    );
+
     let project_dir = Path::new(project_name);
     fs::create_dir_all(project_dir)
         .with_context(|| format!("Failed to create project directory: {}", project_name))?;
 
-    // init new cargo project inside
     let output = Command::new("cargo")
         .arg("init")
         .arg("--lib")
@@ -185,13 +308,12 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
     let deploy_dir = project_dir.join("target").join("deploy");
     fs::create_dir_all(&deploy_dir)?;
 
-    // generate keypair
     let keypair_path = format!("./target/deploy/{}-keypair.json", project_name);
     let keygen_output = Command::new("solana-keygen")
         .arg("new")
         .arg("-o")
         .arg(&keypair_path)
-        .arg("--no-bip39-passphrase") // skip the passphrase prompt
+        .arg("--no-bip39-passphrase")
         .current_dir(project_dir)
         .output()
         .with_context(|| "Failed to generate keypair")?;
@@ -214,7 +336,6 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
         program_address = String::from_utf8_lossy(&address_output.stdout)
             .trim()
             .to_string();
-        println!("Generated program address: {}", program_address);
     } else {
         let error = String::from_utf8_lossy(&address_output.stderr);
         anyhow::bail!("Failed to get program address from keypair: {}", error);
@@ -231,8 +352,6 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
             .trim()
             .to_string()
     } else {
-        let error = String::from_utf8_lossy(&user_address_output.stderr);
-        println!("Failed to get user Solana address: {}", error);
         String::new()
     };
 
@@ -246,16 +365,17 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
 
     init_git_repo(project_dir, project_name)?;
 
-    println!();
     println!(
-        "✅ Pinocchio Project '{}' initialized successfully!",
-        project_name
+        "\n  {} {}\n",
+        green.apply_to("✓"),
+        format!("Project '{}' ready", project_name)
     );
-    println!("\n📋 Next steps:");
-    println!("$ cd {}", project_name);
-    println!("$ chio build");
-    println!("$ chio test");
-    println!("$ chio deploy");
+    println!("  {} {}", dim.apply_to("program"), program_address);
+    println!("\n  {}", dim.apply_to("next steps:"));
+    println!("  $ cd {}", project_name);
+    println!("  $ chio build");
+    println!("  $ chio test");
+    println!("  $ chio deploy");
     println!();
 
     Ok(())
