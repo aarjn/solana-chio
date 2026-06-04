@@ -478,7 +478,7 @@ use {project_name}::states::utils::DataLen;
 
 pub fn program_id() -> Pubkey {
     // Convert Pinocchio program ID to solana-sdk Pubkey
-    Pubkey::new_from_array({project_name}::ID.0)
+    Pubkey::new_from_array({project_name}::ID.to_bytes())
 }
 
 pub fn setup() -> (LiteSVM, Keypair) {
@@ -524,7 +524,7 @@ pub fn initialize(
     let ix_bytes = unsafe { states::utils::to_bytes(&ix) };
     ix_data.extend_from_slice(ix_bytes);
 
-    let system_program = Pubkey::new_from_array(pinocchio_system::ID.0);
+    let system_program = Pubkey::new_from_array(pinocchio_system::ID.to_bytes());
     let accounts = vec![
         AccountMeta::new(data.payer, true),
         AccountMeta::new(data.state_pda.0, false),
