@@ -44,8 +44,6 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
-    #[command(name = "--help")]
-    Help,
 }
 
 fn main() -> Result<()> {
@@ -127,34 +125,7 @@ fn main() -> Result<()> {
         Commands::Keys { action, force } => {
             handle_keys_action(action, *force)?;
         }
-        Commands::Help => {
-            display_help_banner()?;
-        }
     }
-
-    Ok(())
-}
-
-fn display_help_banner() -> Result<()> {
-    // banner
-    println!(
-        r#"
-      *     *
-  ___| |__ (_) ___
- / __| '_ \| |/ _ \
-| (__| | | | | (_) |
- \___|_| |_|_|\___/
- "#
-    );
-
-    println!("👾 Setup your pinocchio project blazingly fast💨");
-
-    println!("\n🏗️ AVAILABLE COMMANDS:");
-    println!("   chio init <project_name>  - Initialize a new Pinocchio project");
-    println!("   chio build                - Build the project");
-    println!("   chio test                 - Run project tests");
-    println!("   chio deploy               - Deploy the project");
-    println!("   chio keys <sync/generate> - Sync/Generate program keypair");
 
     Ok(())
 }
@@ -340,46 +311,27 @@ fn create_project_structure(
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
 
-    match test_framework {
+    fs::write(
+        src_dir.join("lib.rs"),
+        templates::lib_rs(program_address.as_str()),
+    )?;
+
+    let test_dir = project_dir.join("tests");
+    fs::create_dir_all(&test_dir)?;
+
+    let project_name = project_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("Failed to determine project name from directory path")?;
+
+    let test_content = match test_framework {
         TestFramework::Mollusk => {
-            fs::write(
-                src_dir.join("lib.rs"),
-                templates::lib_rs(program_address.as_str()),
-            )?;
-
-            let test_dir = project_dir.join("tests");
-            fs::create_dir_all(&test_dir)?;
-
-            let project_name = project_dir
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("project");
-
-            fs::write(
-                test_dir.join("tests.rs"),
-                templates::unit_tests::unit_test_rs(&user_address, &program_address, project_name),
-            )?;
+            templates::unit_tests::unit_test_rs(&user_address, &program_address, project_name)
         }
-        TestFramework::Litesvm => {
-            fs::write(
-                src_dir.join("lib.rs"),
-                templates::lib_rs(program_address.as_str()),
-            )?;
+        TestFramework::Litesvm => templates::unit_tests::litesvm_initialize_rs(project_name),
+    };
 
-            let test_dir = project_dir.join("tests");
-            fs::create_dir_all(&test_dir)?;
-
-            let project_name_str = project_dir
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("project");
-
-            fs::write(
-                test_dir.join("initialize.rs"),
-                templates::unit_tests::litesvm_initialize_rs(project_name_str),
-            )?;
-        }
-    }
+    fs::write(test_dir.join("tests.rs"), test_content)?;
 
     fs::write(src_dir.join("entrypoint.rs"), templates::entrypoint_rs())?;
 
