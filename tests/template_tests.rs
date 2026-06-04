@@ -31,7 +31,7 @@ mod templates {
     #[test]
     fn lib_rs_has_declare_id_macro() {
         let output = lib_rs("11111111111111111111111111111112");
-        assert!(output.contains("pinocchio_pubkey::declare_id!"));
+        assert!(output.contains("pinocchio::address::declare_id!"));
     }
 
     #[test]
@@ -174,7 +174,7 @@ mod templates {
     #[test]
     fn initialize_instruction_has_owner_and_bump_fields() {
         let output = instructions::initialize();
-        assert!(output.contains("pub owner: Pubkey"));
+        assert!(output.contains("pub owner: [u8; 32]"));
         assert!(output.contains("pub bump: u8"));
     }
 
@@ -202,7 +202,7 @@ mod templates {
     #[test]
     fn initialize_instruction_checks_empty_account() {
         let output = instructions::initialize();
-        assert!(output.contains("data_is_empty"));
+        assert!(output.contains("is_data_empty"));
         assert!(output.contains("AccountAlreadyInitialized"));
     }
 
@@ -253,7 +253,7 @@ mod templates {
     #[test]
     fn state_rs_has_owner_field() {
         let output = states::state_rs();
-        assert!(output.contains("pub owner: Pubkey"));
+        assert!(output.contains("pub owner: [u8; 32]"));
     }
 
     #[test]
@@ -340,7 +340,6 @@ mod templates {
         let test_output = unit_tests::unit_test_rs("user_addr", "prog_addr", "test_proj");
         assert!(test_output.contains("payer_account"));
         assert!(test_output.contains("mystate_account"));
-        assert!(test_output.contains("rent_account"));
     }
 
     #[test]

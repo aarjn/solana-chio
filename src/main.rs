@@ -71,15 +71,26 @@ fn main() -> Result<()> {
             }
         }
         Commands::Test => {
-            println!("Testing program");
-            let status = Command::new("cargo")
+            println!("Building program before testing...");
+            let build_status = Command::new("cargo")
+                .arg("build-sbf")
+                .spawn()?
+                .wait()
+                .with_context(|| "Failed to build project")?;
+
+            if !build_status.success() {
+                anyhow::bail!("Build failed with exit code: {:?}", build_status.code());
+            }
+
+            println!("Build completed, running tests...");
+            let test_status = Command::new("cargo")
                 .arg("test")
                 .spawn()?
                 .wait()
                 .with_context(|| "Failed to test project")?;
 
-            if !status.success() {
-                anyhow::bail!("Test failed with exit code: {:?}", status.code());
+            if !test_status.success() {
+                anyhow::bail!("Test failed with exit code: {:?}", test_status.code());
             } else {
                 println!("Tested successfully!");
             }
@@ -375,16 +386,16 @@ fn update_cargo_toml(
             r#"
 [dev-dependencies]
 solana-sdk = "3.0.0"
-mollusk-svm = "0.7.0"
-mollusk-svm-bencher = "0.7.0"
+mollusk-svm = "0.9.0"
+mollusk-svm-bencher = "0.9.0"
 "#
         }
         TestFramework::Litesvm => {
             r#"
 [dev-dependencies]
 solana-sdk = "3.0.0"
-litesvm = "0.8.1"
-litesvm-token = "0.8.1"
+litesvm = "0.9.1"
+litesvm-token = "0.9.1"
 "#
         }
     };
@@ -399,11 +410,10 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pinocchio = "0.9.2"
+pinocchio = "0.10.2"
 pinocchio-log = "0.5.1"
-pinocchio-pubkey = "0.3.0"
-pinocchio-system = "0.3.0"
-shank = "0.4.5"
+pinocchio-system = "0.5.0"
+shank = "0.4.8"
 
 {dev_deps}
 
