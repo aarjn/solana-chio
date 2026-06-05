@@ -1,10 +1,10 @@
 [package]
 name = "chio"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Arjun <arjunmundamani@gmail.com>"]
 description = "A CLI tool for setting up pinocchio program project"
-repository = "https://github.com/4rjunc/solana-chio"
+repository = "https://github.com/aarjn/solana-chio"
 license = "MIT"
 readme = "README.md"
 keywords = ["cli", "scaffold", "template", "project", "generator", "solana", "pinocchio"]
@@ -23,6 +23,8 @@ clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
 regex = "1.12.3"
 toml = "0.8"
+indicatif = "0.17"
+console = "0.15"
 
 [dev-dependencies]
 tempfile = "3.8"

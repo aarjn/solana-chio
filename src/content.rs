@@ -1,9 +1,8 @@
 pub mod templates {
 
     //lib.rs
-    pub fn lib_rs(address: &str) -> String {
-        format!(
-            r#"#![no_std]
+    pub fn lib_rs() -> &'static str {
+        r#"#![no_std]
 
 #[cfg(not(feature = "no-entrypoint"))]
 mod entrypoint;
@@ -15,20 +14,23 @@ pub mod errors;
 pub mod instructions;
 pub mod states;
 
-pinocchio_pubkey::declare_id!("{}");"#,
-            address
-        )
+#[cfg(not(feature = "no-entrypoint"))]
+pub use entrypoint::{id, ID};"#
     }
 
     // entrypoint.rs template
-    pub fn entrypoint_rs() -> &'static str {
-        r#"#![allow(unexpected_cfgs)]
+    pub fn entrypoint_rs(address: &str) -> String {
+        format!(
+            r#"#![allow(unexpected_cfgs)]
 
-use crate::instructions::{self, ProgramInstruction};
-use pinocchio::{
-    account_info::AccountInfo, default_panic_handler, msg, no_allocator, program_entrypoint,
-    program_error::ProgramError, pubkey::Pubkey, ProgramResult,
-};
+use crate::instructions::{{self, ProgramInstruction}};
+use pinocchio::{{
+    address::declare_id,
+    error::ProgramError, default_panic_handler, no_allocator, program_entrypoint,
+    AccountView, Address, ProgramResult,
+}};
+
+declare_id!("{}");
 
 // This is the entrypoint for the program.
 program_entrypoint!(process_instruction);
@@ -39,21 +41,23 @@ default_panic_handler!();
 
 #[inline(always)]
 fn process_instruction(
-    _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    _program_id: &Address,
+    accounts: &[AccountView],
     instruction_data: &[u8],
-) -> ProgramResult {
+) -> ProgramResult {{
     let (ix_disc, instruction_data) = instruction_data
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;
 
-    match ProgramInstruction::try_from(ix_disc)? {
-        ProgramInstruction::InitializeState => {
-            msg!("initialize");
+    match ProgramInstruction::try_from(ix_disc)? {{
+        ProgramInstruction::InitializeState => {{
+            pinocchio_log::log!("initialize");
             instructions::initialize(accounts, instruction_data)
-        }
-    }
-}"#
+        }}
+    }}
+}}"#,
+            address
+        )
     }
 
     // Configuration files
@@ -95,7 +99,7 @@ tests/
 
 ---
 
-**Author of Chio CLI**: [4rjunc](https://github.com/4rjunc) | [Twitter](https://x.com/4rjunc)"#
+**Built using [Chio](https://github.com/aarjn/solana-chio)**"#
     }
 
     pub fn gitignore() -> &'static str {
@@ -114,12 +118,12 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pinocchio = "0.9.2"
+pinocchio = "0.10.2"
 
 [dev-dependencies]
 solana-sdk = "3.0.0"
-mollusk-svm = "0.7.0"
-mollusk-svm-bencher = "0.7.0"
+mollusk-svm = "0.9.0"
+mollusk-svm-bencher = "0.9.0"
 
 [features]
 no-entrypoint = []
@@ -141,12 +145,12 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pinocchio = "0.9.2"
+pinocchio = "0.10.2"
 
 [dev-dependencies]
 solana-sdk = "3.0.0"
-litesvm = "0.8.1"
-litesvm-token = "0.8.1"
+litesvm = "0.9.1"
+litesvm-token = "0.9.1"
 
 [features]
 no-entrypoint = []
@@ -158,7 +162,7 @@ test-default = ["no-entrypoint", "std"]
     }
 
     pub fn errors_rs() -> &'static str {
-        r#"use pinocchio::program_error::ProgramError;
+        r#"use pinocchio::error::ProgramError;
 
 #[derive(Clone, PartialEq, shank::ShankType)]
 pub enum MyProgramError {
@@ -178,12 +182,10 @@ impl From<MyProgramError> for ProgramError {
     pub mod instructions {
         pub fn initialize() -> &'static str {
             r#"use pinocchio::{
-    account_info::AccountInfo,
-    instruction::{Seed, Signer},
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::rent::Rent,
-    ProgramResult,
+    cpi::{Seed, Signer},
+    error::ProgramError,
+    sysvars::{Sysvar, rent::Rent},
+    AccountView, ProgramResult,
 };
 
 use pinocchio_system::instructions::CreateAccount;
@@ -197,9 +199,9 @@ use crate::{
 };
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy)]
 pub struct Initialize {
-    pub owner: Pubkey,
+    pub owner: [u8; 32],
     pub bump: u8,
 }
 
@@ -207,8 +209,8 @@ impl DataLen for Initialize {
     const LEN: usize = core::mem::size_of::<Initialize>();
 }
 
-pub fn initialize(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    let [payer_acc, state_acc, sysvar_rent_acc, _system_program] = accounts else {
+pub fn initialize(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
+    let [payer_acc, state_acc, _system_program] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
 
@@ -216,21 +218,19 @@ pub fn initialize(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::MissingRequiredSignature);
     }
 
-    if !state_acc.data_is_empty() {
+    if !state_acc.is_data_empty() {
         return Err(ProgramError::AccountAlreadyInitialized);
     }
 
-    let rent = Rent::from_account_info(sysvar_rent_acc)?;
-
     let ix_data = unsafe { load_ix_data::<Initialize>(data)? };
 
-    if ix_data.owner.ne(payer_acc.key()) {
+    if ix_data.owner != *payer_acc.address().as_ref() {
         return Err(MyProgramError::InvalidOwner.into());
     }
 
     let pda_bump_bytes = [ix_data.bump];
 
-    MyState::validate_pda(ix_data.bump, state_acc.key(), &ix_data.owner)?;
+    MyState::validate_pda(ix_data.bump, state_acc.address(), &ix_data.owner)?;
 
     // signer seeds
     let signer_seeds = [
@@ -245,7 +245,7 @@ pub fn initialize(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
         to: state_acc,
         space: MyState::LEN as u64,
         owner: &crate::ID,
-        lamports: rent.minimum_balance(MyState::LEN),
+        lamports: Rent::get()?.minimum_balance_unchecked(MyState::LEN),
     }
     .invoke_signed(&signers)?;
 
@@ -256,7 +256,7 @@ pub fn initialize(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
         }
 
         pub fn instructions_mod_rs() -> &'static str {
-            r#"use pinocchio::program_error::ProgramError;
+            r#"use pinocchio::error::ProgramError;
 
 pub mod initialize;
 
@@ -292,18 +292,16 @@ pub use utils::*;"#
         pub fn state_rs() -> &'static str {
             r#"use super::utils::{load_acc_mut_unchecked, DataLen};
 use pinocchio::{
-    account_info::AccountInfo,
-    program_error::ProgramError,
-    pubkey::{self, Pubkey},
-    ProgramResult,
+    error::ProgramError,
+    AccountView, Address, ProgramResult,
 };
 
 use crate::{errors::MyProgramError, instructions::Initialize};
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy)]
 pub struct MyState {
-    pub owner: Pubkey,
+    pub owner: [u8; 32],
 }
 
 impl DataLen for MyState {
@@ -313,18 +311,18 @@ impl DataLen for MyState {
 impl MyState {
     pub const SEED: &'static str = "init";
 
-    pub fn validate_pda(bump: u8, pda: &Pubkey, owner: &Pubkey) -> Result<(), ProgramError> {
-        let seed_with_bump = &[Self::SEED.as_bytes(), owner, &[bump]];
-        let derived = pubkey::create_program_address(seed_with_bump, &crate::ID)?;
+    pub fn validate_pda(bump: u8, pda: &Address, owner: &[u8; 32]) -> Result<(), ProgramError> {
+        let seed_with_bump = &[Self::SEED.as_bytes(), owner.as_ref(), &[bump]];
+        let derived = Address::create_program_address(seed_with_bump, &crate::ID)?;
         if derived != *pda {
             return Err(MyProgramError::PdaMismatch.into());
         }
         Ok(())
     }
 
-    pub fn initialize(my_stata_acc: &AccountInfo, ix_data: &Initialize) -> ProgramResult {
+    pub fn initialize(my_stata_acc: &AccountView, ix_data: &Initialize) -> ProgramResult {
         let my_state =
-            unsafe { load_acc_mut_unchecked::<MyState>(my_stata_acc.borrow_mut_data_unchecked()) }?;
+            unsafe { load_acc_mut_unchecked::<MyState>(my_stata_acc.borrow_unchecked_mut()) }?;
 
         my_state.owner = ix_data.owner;
         Ok(())
@@ -333,7 +331,7 @@ impl MyState {
         }
 
         pub fn utils_rs() -> &'static str {
-            r#"use pinocchio::program_error::ProgramError;
+            r#"use pinocchio::error::ProgramError;
 
 use crate::errors::MyProgramError;
 
@@ -343,7 +341,10 @@ pub trait DataLen {
 
 #[inline(always)]
 pub unsafe fn load_acc_unchecked<T: DataLen>(bytes: &[u8]) -> Result<&T, ProgramError> {
-    if bytes.len() != T::LEN {
+    if bytes.len() != core::mem::size_of::<T>() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if bytes.as_ptr() as usize % core::mem::align_of::<T>() != 0 {
         return Err(ProgramError::InvalidAccountData);
     }
     Ok(&*(bytes.as_ptr() as *const T))
@@ -351,7 +352,10 @@ pub unsafe fn load_acc_unchecked<T: DataLen>(bytes: &[u8]) -> Result<&T, Program
 
 #[inline(always)]
 pub unsafe fn load_acc_mut_unchecked<T: DataLen>(bytes: &mut [u8]) -> Result<&mut T, ProgramError> {
-    if bytes.len() != T::LEN {
+    if bytes.len() != core::mem::size_of::<T>() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if bytes.as_ptr() as usize % core::mem::align_of::<T>() != 0 {
         return Err(ProgramError::InvalidAccountData);
     }
     Ok(&mut *(bytes.as_mut_ptr() as *mut T))
@@ -389,24 +393,14 @@ use alloc::vec;
 
 use {project_name}::instructions::Initialize;
 use {project_name}::states::{to_bytes, MyState};
-use solana_sdk::rent::Rent;
 
 pub const PROGRAM: Pubkey = pubkey!("{program_address}");
-
-pub const RENT: Pubkey = pubkey!("SysvarRent111111111111111111111111111111111");
 
 pub const PAYER: Pubkey = pubkey!("{address}");
 
 pub fn mollusk() -> Mollusk {
     let mollusk = Mollusk::new(&PROGRAM, "target/deploy/{project_name}");
     mollusk
-}
-
-pub fn get_rent_data() -> Vec<u8> {
-    let rent = Rent::default();
-    unsafe {
-        core::slice::from_raw_parts(&rent as *const Rent as *const u8, core::mem::size_of::<Rent>()).to_vec()
-    }
 }
 
 #[test]
@@ -423,22 +417,17 @@ fn test_initialize_mystate() {
     //Initialize the accounts
     let payer_account = Account::new(1 * LAMPORTS_PER_SOL, 0, &system_program);
     let mystate_account = Account::new(0, 0, &system_program);
-    let rent_size = core::mem::size_of::<Rent>();
-    let min_balance = mollusk.sysvars.rent.minimum_balance(rent_size);
-    let mut rent_account = Account::new(min_balance, rent_size, &RENT);
-    rent_account.data = get_rent_data();
 
     //Push the accounts in to the instruction_accounts vec!
     let ix_accounts = vec![
         AccountMeta::new(PAYER, true),
         AccountMeta::new(mystate_pda, false),
-        AccountMeta::new_readonly(RENT, false),
         AccountMeta::new_readonly(system_program, false),
     ];
 
     // Create the instruction data
     let ix_data = Initialize {
-        owner: *PAYER.as_array(),
+        owner: PAYER.to_bytes(),
         bump,
     };
 
@@ -455,7 +444,6 @@ fn test_initialize_mystate() {
     let tx_accounts = &vec![
         (PAYER, payer_account.clone()),
         (mystate_pda, mystate_account.clone()),
-        (RENT, rent_account.clone()),
         (system_program, system_account.clone()),
     ];
 
@@ -485,7 +473,6 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    sysvar,
     transaction::Transaction,
 };
 
@@ -495,7 +482,7 @@ use {project_name}::states::utils::DataLen;
 
 pub fn program_id() -> Pubkey {
     // Convert Pinocchio program ID to solana-sdk Pubkey
-    Pubkey::new_from_array({project_name}::ID)
+    Pubkey::new_from_array({project_name}::ID.to_bytes())
 }
 
 pub fn setup() -> (LiteSVM, Keypair) {
@@ -541,11 +528,10 @@ pub fn initialize(
     let ix_bytes = unsafe { states::utils::to_bytes(&ix) };
     ix_data.extend_from_slice(ix_bytes);
 
-    let system_program = Pubkey::from(pinocchio_system::id());
+    let system_program = Pubkey::new_from_array(pinocchio_system::ID.to_bytes());
     let accounts = vec![
         AccountMeta::new(data.payer, true),
         AccountMeta::new(data.state_pda.0, false),
-        AccountMeta::new_readonly(sysvar::rent::id(), false),
         AccountMeta::new_readonly(system_program, false),
     ];
 
