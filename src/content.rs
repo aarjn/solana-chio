@@ -1,9 +1,8 @@
 pub mod templates {
 
     //lib.rs
-    pub fn lib_rs(address: &str) -> String {
-        format!(
-            r#"#![no_std]
+    pub fn lib_rs() -> &'static str {
+        r#"#![no_std]
 
 #[cfg(not(feature = "no-entrypoint"))]
 mod entrypoint;
@@ -15,20 +14,23 @@ pub mod errors;
 pub mod instructions;
 pub mod states;
 
-pinocchio::address::declare_id!("{}");"#,
-            address
-        )
+#[cfg(not(feature = "no-entrypoint"))]
+pub use entrypoint::{id, ID};"#
     }
 
     // entrypoint.rs template
-    pub fn entrypoint_rs() -> &'static str {
-        r#"#![allow(unexpected_cfgs)]
+    pub fn entrypoint_rs(address: &str) -> String {
+        format!(
+            r#"#![allow(unexpected_cfgs)]
 
-use crate::instructions::{self, ProgramInstruction};
-use pinocchio::{
+use crate::instructions::{{self, ProgramInstruction}};
+use pinocchio::{{
+    address::declare_id,
     error::ProgramError, default_panic_handler, no_allocator, program_entrypoint,
     AccountView, Address, ProgramResult,
-};
+}};
+
+declare_id!("{}");
 
 // This is the entrypoint for the program.
 program_entrypoint!(process_instruction);
@@ -42,18 +44,20 @@ fn process_instruction(
     _program_id: &Address,
     accounts: &[AccountView],
     instruction_data: &[u8],
-) -> ProgramResult {
+) -> ProgramResult {{
     let (ix_disc, instruction_data) = instruction_data
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;
 
-    match ProgramInstruction::try_from(ix_disc)? {
-        ProgramInstruction::InitializeState => {
+    match ProgramInstruction::try_from(ix_disc)? {{
+        ProgramInstruction::InitializeState => {{
             pinocchio_log::log!("initialize");
             instructions::initialize(accounts, instruction_data)
-        }
-    }
-}"#
+        }}
+    }}
+}}"#,
+            address
+        )
     }
 
     // Configuration files
@@ -95,7 +99,7 @@ tests/
 
 ---
 
-**Author of Chio CLI**: [4rjunc](https://github.com/4rjunc) | [Twitter](https://x.com/4rjunc)"#
+**Built using [Chio](https://github.com/aarjn/solana-chio)**"#
     }
 
     pub fn gitignore() -> &'static str {

@@ -8,85 +8,73 @@ mod templates {
     use chio::content::templates::*;
 
     #[test]
-    fn lib_rs_generates_with_provided_address() {
-        let address = "11111111111111111111111111111112";
-        let output = lib_rs(address);
-        assert!(output.contains(address));
-    }
-
-    #[test]
     fn lib_rs_is_no_std() {
-        let output = lib_rs("11111111111111111111111111111112");
+        let output = lib_rs();
         assert!(output.contains("#![no_std]"));
     }
 
     #[test]
     fn lib_rs_declares_required_modules() {
-        let output = lib_rs("11111111111111111111111111111112");
+        let output = lib_rs();
         assert!(output.contains("pub mod errors"));
         assert!(output.contains("pub mod instructions"));
         assert!(output.contains("pub mod states"));
     }
 
     #[test]
-    fn lib_rs_has_declare_id_macro() {
-        let output = lib_rs("11111111111111111111111111111112");
-        assert!(output.contains("pinocchio::address::declare_id!"));
+    fn lib_rs_reexports_id() {
+        let output = lib_rs();
+        assert!(output.contains("pub use entrypoint::{id, ID}"));
     }
 
     #[test]
-    fn lib_rs_different_addresses_create_different_output() {
-        let addr1 = "11111111111111111111111111111111";
-        let addr2 = "22222222222222222222222222222222";
-
-        let output1 = lib_rs(addr1);
-        let output2 = lib_rs(addr2);
-
-        assert_ne!(output1, output2);
-        assert!(output1.contains(addr1));
-        assert!(output2.contains(addr2));
+    fn entrypoint_rs_has_declare_id_macro() {
+        let address = "11111111111111111111111111111112";
+        let output = entrypoint_rs(address);
+        assert!(output.contains("declare_id!"));
+        assert!(output.contains(address));
     }
 
     #[test]
     fn entrypoint_rs_has_program_entrypoint_macro() {
-        let output = entrypoint_rs();
+        let output = entrypoint_rs("11111111111111111111111111111112");
         assert!(output.contains("program_entrypoint!"));
     }
 
     #[test]
     fn entrypoint_rs_has_no_allocator_macro() {
-        let output = entrypoint_rs();
+        let output = entrypoint_rs("11111111111111111111111111111112");
         assert!(output.contains("no_allocator!()"));
     }
 
     #[test]
     fn entrypoint_rs_has_default_panic_handler() {
-        let output = entrypoint_rs();
+        let output = entrypoint_rs("11111111111111111111111111111112");
         assert!(output.contains("default_panic_handler!()"));
     }
 
     #[test]
     fn entrypoint_rs_has_process_instruction_function() {
-        let output = entrypoint_rs();
+        let output = entrypoint_rs("11111111111111111111111111111112");
         assert!(output.contains("fn process_instruction"));
     }
 
     #[test]
     fn entrypoint_rs_handles_initialize_instruction() {
-        let output = entrypoint_rs();
+        let output = entrypoint_rs("11111111111111111111111111111112");
         assert!(output.contains("ProgramInstruction::InitializeState"));
     }
 
     #[test]
     fn entrypoint_rs_imports_required_modules() {
-        let output = entrypoint_rs();
+        let output = entrypoint_rs("11111111111111111111111111111112");
         assert!(output.contains("use crate::instructions"));
         assert!(output.contains("use pinocchio"));
     }
 
     #[test]
     fn entrypoint_rs_handles_invalid_instruction_data() {
-        let output = entrypoint_rs();
+        let output = entrypoint_rs("11111111111111111111111111111112");
         assert!(output.contains("ProgramError::InvalidInstructionData"));
     }
 

@@ -444,7 +444,7 @@ fn create_project_structure(
 
     fs::write(
         src_dir.join("lib.rs"),
-        templates::lib_rs(program_address.as_str()),
+        templates::lib_rs(),
     )?;
 
     let test_dir = project_dir.join("tests");
@@ -464,7 +464,7 @@ fn create_project_structure(
 
     fs::write(test_dir.join("tests.rs"), test_content)?;
 
-    fs::write(src_dir.join("entrypoint.rs"), templates::entrypoint_rs())?;
+    fs::write(src_dir.join("entrypoint.rs"), templates::entrypoint_rs(&program_address))?;
 
     fs::write(src_dir.join("errors.rs"), templates::errors_rs())?;
 
@@ -631,19 +631,19 @@ fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
         fs::create_dir_all(target_deploy_dir)?;
     }
 
-    let lib_path = Path::new("src/lib.rs");
-    if !lib_path.exists() {
-        anyhow::bail!("src/lib.rs not found. Please run 'chio init' first.");
+    let entrypoint_path = Path::new("src/entrypoint.rs");
+    if !entrypoint_path.exists() {
+        anyhow::bail!("src/entrypoint.rs not found. Please run 'chio init' first.");
     }
 
-    let content = fs::read_to_string(lib_path).with_context(|| "Failed to read src/lib.rs")?;
+    let content = fs::read_to_string(entrypoint_path).with_context(|| "Failed to read src/entrypoint.rs")?;
 
     // Use * instead of + to allow empty strings like declare_id!("")
     let re = Regex::new(r#"declare_id!\s*\(\s*"([^"]*)"\s*\)"#).unwrap();
 
     // Check if the macro exists at all. Error if missing, proceed if empty.
     let captures = re.captures(&content)
-        .ok_or_else(|| anyhow::anyhow!("The 'declare_id!' macro was not found in src/lib.rs. It must be present even if empty."))?;
+        .ok_or_else(|| anyhow::anyhow!("The 'declare_id!' macro was not found in src/entrypoint.rs. It must be present even if empty."))?;
 
     let declared_program_address = captures
         .get(1)
@@ -681,15 +681,15 @@ fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
                 println!("⚠️ Keys mismatch. Syncing keypair with declared...");
 
                 // Reuse logic to generate and update
-                update_declared_id(lib_path, &content, &re, &current_keypair_address)?;
+                update_declared_id(entrypoint_path, &content, &re, &current_keypair_address)?;
                 println!("Keypair synced: {}", current_keypair_address);
             }
         }
         KeyAction::Generate => {
             println!("Generating a fresh keypair...");
             let new_address =
-                generate_and_update_keys(lib_path, &keypair_path, &content, &re, force)?;
-            println!("✅ Generated and updated src/lib.rs with: {}", new_address);
+                generate_and_update_keys(entrypoint_path, &keypair_path, &content, &re, force)?;
+            println!("✅ Generated and updated src/entrypoint.rs with: {}", new_address);
         }
     }
 
@@ -699,7 +699,7 @@ fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
 fn update_declared_id(lib_path: &Path, content: &str, re: &Regex, new_address: &str) -> Result<()> {
     let new_content = re.replace(content, format!(r#"declare_id!("{}")"#, new_address));
     fs::write(lib_path, new_content.to_string())
-        .with_context(|| "Failed to write ID to src/lib.rs")?;
+        .with_context(|| "Failed to write ID to src/entrypoint.rs")?;
     Ok(())
 }
 
