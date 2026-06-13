@@ -263,8 +263,13 @@ pub mod initialize;
 pub use initialize::*;
 
 #[repr(u8)]
+#[derive(shank::ShankInstruction)]
+#[rustfmt::skip]
 pub enum ProgramInstruction {
-    InitializeState,
+    #[account(0, writable, signer, name="payer", desc="Payer and owner; funds the state PDA")]
+    #[account(1, writable, name="state", desc="State PDA created by this instruction")]
+    #[account(2, name="system_program", desc="System program")]
+      InitializeState,
 }
 
 impl TryFrom<&u8> for ProgramInstruction {
