@@ -67,6 +67,13 @@ chio keys sync
 # Generate a new keypair and sync it with the declared id
 chio keys generate
 
+# Generate a TypeScript (@solana/kit) client from the program
+# Runs shank to extract the IDL, then codama to render the client (uses bun)
+chio client
+
+# Only extract the IDL (idl/<program>.json), skip client generation
+chio client --idl-only
+
 # Get help
 chio --help
 ```
