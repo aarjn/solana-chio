@@ -62,7 +62,8 @@ mod templates {
     #[test]
     fn entrypoint_rs_handles_initialize_instruction() {
         let output = entrypoint_rs("11111111111111111111111111111112");
-        assert!(output.contains("ProgramInstruction::InitializeState"));
+        assert!(output.contains("0 =>"));
+        assert!(output.contains("instructions::initialize"));
     }
 
     #[test]
@@ -207,15 +208,17 @@ mod templates {
     }
 
     #[test]
-    fn instructions_mod_rs_implements_try_from() {
+    fn instructions_mod_rs_derives_shank_instruction() {
         let output = instructions::instructions_mod_rs();
-        assert!(output.contains("impl TryFrom<&u8> for ProgramInstruction"));
+        assert!(output.contains("shank::ShankInstruction"));
+        assert!(output.contains("InitializeState(Initialize)"));
     }
 
     #[test]
-    fn instructions_mod_rs_discriminator_mapping() {
+    fn instructions_mod_rs_has_account_annotations() {
         let output = instructions::instructions_mod_rs();
-        assert!(output.contains("0 => Ok(ProgramInstruction::InitializeState)"));
+        assert!(output.contains("name=\"payer\""));
+        assert!(output.contains("name=\"system_program\""));
     }
 
     #[test]

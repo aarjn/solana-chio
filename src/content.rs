@@ -23,7 +23,7 @@ pub use entrypoint::{id, ID};"#
         format!(
             r#"#![allow(unexpected_cfgs)]
 
-use crate::instructions::{{self, ProgramInstruction}};
+use crate::instructions;
 use pinocchio::{{
     address::declare_id,
     error::ProgramError, default_panic_handler, no_allocator, program_entrypoint,
@@ -49,11 +49,12 @@ fn process_instruction(
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;
 
-    match ProgramInstruction::try_from(ix_disc)? {{
-        ProgramInstruction::InitializeState => {{
+    match *ix_disc {{
+        0 => {{
             pinocchio_log::log!("initialize");
             instructions::initialize(accounts, instruction_data)
         }}
+        _ => Err(ProgramError::InvalidInstructionData),
     }}
 }}"#,
             address
@@ -199,8 +200,9 @@ use crate::{
 };
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, shank::ShankType)]
 pub struct Initialize {
+    #[idl_type("Pubkey")]
     pub owner: [u8; 32],
     pub bump: u8,
 }
@@ -256,31 +258,19 @@ pub fn initialize(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         }
 
         pub fn instructions_mod_rs() -> &'static str {
-            r#"use pinocchio::error::ProgramError;
-
-pub mod initialize;
+            r#"pub mod initialize;
 
 pub use initialize::*;
 
 #[repr(u8)]
 #[derive(shank::ShankInstruction)]
 #[rustfmt::skip]
+#[allow(dead_code)]
 pub enum ProgramInstruction {
     #[account(0, writable, signer, name="payer", desc="Payer and owner; funds the state PDA")]
     #[account(1, writable, name="state", desc="State PDA created by this instruction")]
     #[account(2, name="system_program", desc="System program")]
-      InitializeState,
-}
-
-impl TryFrom<&u8> for ProgramInstruction {
-    type Error = ProgramError;
-
-    fn try_from(value: &u8) -> Result<Self, Self::Error> {
-        match *value {
-            0 => Ok(ProgramInstruction::InitializeState),
-            _ => Err(ProgramError::InvalidInstructionData),
-        }
-    }
+    InitializeState(Initialize),
 }"#
         }
     }
@@ -306,6 +296,7 @@ use crate::{errors::MyProgramError, instructions::Initialize};
 #[repr(C)]
 #[derive(Clone, Copy, shank::ShankAccount)]
 pub struct MyState {
+    #[idl_type("Pubkey")]
     pub owner: [u8; 32],
 }
 
