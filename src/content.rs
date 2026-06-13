@@ -304,7 +304,7 @@ use pinocchio::{
 use crate::{errors::MyProgramError, instructions::Initialize};
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, shank::ShankAccount)]
 pub struct MyState {
     pub owner: [u8; 32],
 }
