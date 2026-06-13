@@ -285,12 +285,19 @@ fn generate_client(idl_only: bool) -> Result<()> {
         anyhow::bail!("`shank` not found. Install it with:\n  cargo install shank-cli");
     }
 
-    let idl_result = run_with_spinner("shank", &["idl", "-o", "idl", "-r", "."], "Generating IDL...")?;
+    let idl_result = run_with_spinner(
+        "shank",
+        &["idl", "-o", "idl", "-r", "."],
+        "Generating IDL...",
+    )?;
     if !idl_result.status.success() {
         for line in &idl_result.stderr_lines {
             eprintln!("{}", line);
         }
-        anyhow::bail!("shank failed with exit code: {:?}", idl_result.status.code());
+        anyhow::bail!(
+            "shank failed with exit code: {:?}",
+            idl_result.status.code()
+        );
     }
 
     let project_name = project_name_from_cargo_toml(Path::new("."))?;
@@ -338,7 +345,11 @@ fn generate_client(idl_only: bool) -> Result<()> {
         );
     }
 
-    let render = run_with_spinner("bunx", &["codama", "run", "js"], "Generating TypeScript client...")?;
+    let render = run_with_spinner(
+        "bunx",
+        &["codama", "run", "js"],
+        "Generating TypeScript client...",
+    )?;
     if !render.status.success() {
         for line in &render.stderr_lines {
             eprintln!("{}", line);
@@ -346,10 +357,7 @@ fn generate_client(idl_only: bool) -> Result<()> {
         anyhow::bail!("codama failed with exit code: {:?}", render.status.code());
     }
 
-    println!(
-        "\n  {} TypeScript client generated\n",
-        green.apply_to("✓")
-    );
+    println!("\n  {} TypeScript client generated\n", green.apply_to("✓"));
     println!("  {} clients/js/src/generated", dim.apply_to("output"));
 
     Ok(())
@@ -433,15 +441,14 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
         .output()
         .with_context(|| "Failed to read keypair address")?;
 
-    let program_address: String;
-    if address_output.status.success() {
-        program_address = String::from_utf8_lossy(&address_output.stdout)
+    let program_address: String = if address_output.status.success() {
+        String::from_utf8_lossy(&address_output.stdout)
             .trim()
-            .to_string();
+            .to_string()
     } else {
         let error = String::from_utf8_lossy(&address_output.stderr);
         anyhow::bail!("Failed to get program address from keypair: {}", error);
-    }
+    };
 
     let user_address_output = Command::new("solana")
         .arg("address")
@@ -468,9 +475,9 @@ fn init_project(project_name: &str, test_framework: TestFramework) -> Result<()>
     init_git_repo(project_dir, project_name)?;
 
     println!(
-        "\n  {} {}\n",
+        "\n  {} Project '{}' ready\n",
         green.apply_to("✓"),
-        format!("Project '{}' ready", project_name)
+        project_name
     );
     println!("  {} {}", dim.apply_to("program"), program_address);
     println!("\n  {}", dim.apply_to("next steps:"));
@@ -544,10 +551,7 @@ fn create_project_structure(
     let src_dir = project_dir.join("src");
     fs::create_dir_all(&src_dir)?;
 
-    fs::write(
-        src_dir.join("lib.rs"),
-        templates::lib_rs(),
-    )?;
+    fs::write(src_dir.join("lib.rs"), templates::lib_rs())?;
 
     let test_dir = project_dir.join("tests");
     fs::create_dir_all(&test_dir)?;
@@ -566,7 +570,10 @@ fn create_project_structure(
 
     fs::write(test_dir.join("tests.rs"), test_content)?;
 
-    fs::write(src_dir.join("entrypoint.rs"), templates::entrypoint_rs(&program_address))?;
+    fs::write(
+        src_dir.join("entrypoint.rs"),
+        templates::entrypoint_rs(&program_address),
+    )?;
 
     fs::write(src_dir.join("errors.rs"), templates::errors_rs())?;
 
@@ -738,7 +745,8 @@ fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
         anyhow::bail!("src/entrypoint.rs not found. Please run 'chio init' first.");
     }
 
-    let content = fs::read_to_string(entrypoint_path).with_context(|| "Failed to read src/entrypoint.rs")?;
+    let content =
+        fs::read_to_string(entrypoint_path).with_context(|| "Failed to read src/entrypoint.rs")?;
 
     // Use * instead of + to allow empty strings like declare_id!("")
     let re = Regex::new(r#"declare_id!\s*\(\s*"([^"]*)"\s*\)"#).unwrap();
@@ -791,7 +799,10 @@ fn handle_keys_action(action: &KeyAction, force: bool) -> Result<()> {
             println!("Generating a fresh keypair...");
             let new_address =
                 generate_and_update_keys(entrypoint_path, &keypair_path, &content, &re, force)?;
-            println!("✅ Generated and updated src/entrypoint.rs with: {}", new_address);
+            println!(
+                "✅ Generated and updated src/entrypoint.rs with: {}",
+                new_address
+            );
         }
     }
 
