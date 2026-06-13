@@ -50,6 +50,10 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
+    Client {
+        #[arg(long, default_value_t = false)]
+        idl_only: bool,
+    },
 }
 
 const MAX_LOG_LINES: usize = 6;
@@ -248,7 +252,105 @@ fn main() -> Result<()> {
         Commands::Keys { action, force } => {
             handle_keys_action(action, *force)?;
         }
+        Commands::Client { idl_only } => {
+            generate_client(*idl_only)?;
+        }
     }
+
+    Ok(())
+}
+
+fn command_exists(cmd: &str) -> bool {
+    Command::new(cmd)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
+}
+
+fn generate_client(idl_only: bool) -> Result<()> {
+    let green = Style::new().green().bold();
+    let dim = Style::new().dim();
+
+    // Preflight: make sure we're inside a chio/pinocchio project.
+    if !Path::new("src/entrypoint.rs").exists() {
+        anyhow::bail!(
+            "src/entrypoint.rs not found. Run this inside a chio project (see 'chio init')."
+        );
+    }
+
+    // 1. Extract the IDL from the program source with shank (required).
+    if !command_exists("shank") {
+        anyhow::bail!("`shank` not found. Install it with:\n  cargo install shank-cli");
+    }
+
+    let idl_result = run_with_spinner("shank", &["idl", "-o", "idl", "-r", "."], "Generating IDL...")?;
+    if !idl_result.status.success() {
+        for line in &idl_result.stderr_lines {
+            eprintln!("{}", line);
+        }
+        anyhow::bail!("shank failed with exit code: {:?}", idl_result.status.code());
+    }
+
+    let project_name = project_name_from_cargo_toml(Path::new("."))?;
+    let idl_path = format!("idl/{}.json", project_name);
+    if !Path::new(&idl_path).exists() {
+        anyhow::bail!("Expected IDL at {} but shank did not produce it.", idl_path);
+    }
+    println!("  {} IDL written to {}", green.apply_to("✓"), idl_path);
+
+    if idl_only {
+        return Ok(());
+    }
+
+    // 2. Render the TypeScript client from the IDL with codama.
+    let codama_cfg = Path::new("codama.json");
+    if !codama_cfg.exists() {
+        fs::write(codama_cfg, templates::codama_json(&project_name))?;
+        println!("  {} codama.json", green.apply_to("✓"));
+    }
+
+    let package_json = Path::new("package.json");
+    if !package_json.exists() {
+        fs::write(package_json, templates::package_json(&project_name))?;
+        println!("  {} package.json", green.apply_to("✓"));
+    }
+
+    if !command_exists("bun") {
+        println!(
+            "\n  {}",
+            dim.apply_to("bun not found. Install bun (https://bun.sh), then run:")
+        );
+        println!("  $ bun install");
+        println!("  $ bunx codama run js");
+        return Ok(());
+    }
+
+    let install = run_with_spinner("bun", &["install"], "Installing client dependencies...")?;
+    if !install.status.success() {
+        for line in &install.stderr_lines {
+            eprintln!("{}", line);
+        }
+        anyhow::bail!(
+            "bun install failed with exit code: {:?}",
+            install.status.code()
+        );
+    }
+
+    let render = run_with_spinner("bunx", &["codama", "run", "js"], "Generating TypeScript client...")?;
+    if !render.status.success() {
+        for line in &render.stderr_lines {
+            eprintln!("{}", line);
+        }
+        anyhow::bail!("codama failed with exit code: {:?}", render.status.code());
+    }
+
+    println!(
+        "\n  {} TypeScript client generated\n",
+        green.apply_to("✓")
+    );
+    println!("  {} clients/js/src/generated", dim.apply_to("output"));
 
     Ok(())
 }

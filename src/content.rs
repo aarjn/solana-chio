@@ -105,7 +105,52 @@ tests/
 
     pub fn gitignore() -> &'static str {
         r#"/target
-.env"#
+.env
+node_modules"#
+    }
+
+    // codama.json config consumed by `codama run js` to render the TS client.
+    pub fn codama_json(project_name: &str) -> String {
+        format!(
+            r#"{{
+  "idl": "idl/{}.json",
+  "scripts": {{
+    "js": [
+      {{
+        "from": "@codama/renderers-js",
+        "args": ["clients/js"]
+      }}
+    ]
+  }}
+}}
+"#,
+            project_name
+        )
+    }
+
+    // Minimal package.json providing the codama toolchain and the client runtime dep.
+    pub fn package_json(project_name: &str) -> String {
+        format!(
+            r#"{{
+  "name": "{}-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {{
+    "generate": "codama run js"
+  }},
+  "dependencies": {{
+    "@solana/kit": "^6.9.0"
+  }},
+  "devDependencies": {{
+    "codama": "^1.7.0",
+    "@codama/renderers-js": "^2.2.0",
+    "@codama/nodes-from-anchor": "^1.5.0"
+  }}
+}}
+"#,
+            project_name
+        )
     }
 
     pub fn cargo_toml_mollusk(project_name: &str) -> String {
