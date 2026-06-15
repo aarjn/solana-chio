@@ -104,13 +104,12 @@ crate-type = ["cdylib", "rlib"]
         fs::create_dir_all(&src_dir).expect("Failed to create src dir");
 
         // Create all required files
+        fs::write(src_dir.join("lib.rs"), templates::lib_rs()).expect("Failed to write lib.rs");
         fs::write(
-            src_dir.join("lib.rs"),
-            templates::lib_rs(),
+            src_dir.join("entrypoint.rs"),
+            templates::entrypoint_rs("11111111111111111111111111111112"),
         )
-        .expect("Failed to write lib.rs");
-        fs::write(src_dir.join("entrypoint.rs"), templates::entrypoint_rs("11111111111111111111111111111112"))
-            .expect("Failed to write entrypoint.rs");
+        .expect("Failed to write entrypoint.rs");
         fs::write(src_dir.join("errors.rs"), templates::errors_rs())
             .expect("Failed to write errors.rs");
         fs::write(project_dir.join("README.md"), templates::readme_md())
@@ -170,11 +169,14 @@ crate-type = ["cdylib", "rlib"]
         fs::create_dir_all(&src_dir).expect("Failed to create src dir");
 
         let test_address = "11111111111111111111111111111112";
-        fs::write(src_dir.join("entrypoint.rs"), templates::entrypoint_rs(test_address))
-            .expect("Failed to write entrypoint.rs");
+        fs::write(
+            src_dir.join("entrypoint.rs"),
+            templates::entrypoint_rs(test_address),
+        )
+        .expect("Failed to write entrypoint.rs");
 
-        let entrypoint_content =
-            fs::read_to_string(src_dir.join("entrypoint.rs")).expect("Failed to read entrypoint.rs");
+        let entrypoint_content = fs::read_to_string(src_dir.join("entrypoint.rs"))
+            .expect("Failed to read entrypoint.rs");
 
         assert!(entrypoint_content.contains(test_address));
     }

@@ -23,7 +23,7 @@ pub use entrypoint::{id, ID};"#
         format!(
             r#"#![allow(unexpected_cfgs)]
 
-use crate::instructions::{{self, ProgramInstruction}};
+use crate::instructions;
 use pinocchio::{{
     address::declare_id,
     error::ProgramError, default_panic_handler, no_allocator, program_entrypoint,
@@ -49,11 +49,12 @@ fn process_instruction(
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;
 
-    match ProgramInstruction::try_from(ix_disc)? {{
-        ProgramInstruction::InitializeState => {{
+    match *ix_disc {{
+        0 => {{
             pinocchio_log::log!("initialize");
             instructions::initialize(accounts, instruction_data)
         }}
+        _ => Err(ProgramError::InvalidInstructionData),
     }}
 }}"#,
             address
@@ -104,7 +105,52 @@ tests/
 
     pub fn gitignore() -> &'static str {
         r#"/target
-.env"#
+.env
+node_modules"#
+    }
+
+    // codama.json config consumed by `codama run js` to render the TS client.
+    pub fn codama_json(project_name: &str) -> String {
+        format!(
+            r#"{{
+  "idl": "idl/{}.json",
+  "scripts": {{
+    "js": [
+      {{
+        "from": "@codama/renderers-js",
+        "args": ["clients/js"]
+      }}
+    ]
+  }}
+}}
+"#,
+            project_name
+        )
+    }
+
+    // Minimal package.json providing the codama toolchain and the client runtime dep.
+    pub fn package_json(project_name: &str) -> String {
+        format!(
+            r#"{{
+  "name": "{}-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {{
+    "generate": "codama run js"
+  }},
+  "dependencies": {{
+    "@solana/kit": "^6.9.0"
+  }},
+  "devDependencies": {{
+    "codama": "^1.7.0",
+    "@codama/renderers-js": "^2.2.0",
+    "@codama/nodes-from-anchor": "^1.5.0"
+  }}
+}}
+"#,
+            project_name
+        )
     }
 
     pub fn cargo_toml_mollusk(project_name: &str) -> String {
@@ -199,8 +245,9 @@ use crate::{
 };
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, shank::ShankType)]
 pub struct Initialize {
+    #[idl_type("Pubkey")]
     pub owner: [u8; 32],
     pub bump: u8,
 }
@@ -256,26 +303,19 @@ pub fn initialize(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         }
 
         pub fn instructions_mod_rs() -> &'static str {
-            r#"use pinocchio::error::ProgramError;
-
-pub mod initialize;
+            r#"pub mod initialize;
 
 pub use initialize::*;
 
 #[repr(u8)]
+#[derive(shank::ShankInstruction)]
+#[rustfmt::skip]
+#[allow(dead_code)]
 pub enum ProgramInstruction {
-    InitializeState,
-}
-
-impl TryFrom<&u8> for ProgramInstruction {
-    type Error = ProgramError;
-
-    fn try_from(value: &u8) -> Result<Self, Self::Error> {
-        match *value {
-            0 => Ok(ProgramInstruction::InitializeState),
-            _ => Err(ProgramError::InvalidInstructionData),
-        }
-    }
+    #[account(0, writable, signer, name="payer", desc="Payer and owner; funds the state PDA")]
+    #[account(1, writable, name="state", desc="State PDA created by this instruction")]
+    #[account(2, name="system_program", desc="System program")]
+    InitializeState(Initialize),
 }"#
         }
     }
@@ -299,8 +339,9 @@ use pinocchio::{
 use crate::{errors::MyProgramError, instructions::Initialize};
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, shank::ShankAccount)]
 pub struct MyState {
+    #[idl_type("Pubkey")]
     pub owner: [u8; 32],
 }
 
